@@ -2,15 +2,11 @@ import os
 import sys
 import pandas as pd
 from dotenv import load_dotenv
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 import logging
 from datetime import datetime, timedelta
-from email.mime.text import MIMEText
+from EmailSender import EmailSender
 
 # 配置日志
 logging.basicConfig(
@@ -51,42 +47,6 @@ def get_previous_two_months(date: datetime = None):
         last_month.strftime("%Y-%m-%d"),
         current_month.strftime("%Y-%m-%d"),
     )
-
-
-def send_email(
-    file_path: str,
-    sender_email: str,
-    receiver_email: str,
-    cc_email: str,
-    password: str,
-    subject: str,
-    smtp_server: str = "smtp.exmail.qq.com",
-    smtp_port: int = 465,
-) -> None:
-
-    # 创建邮件
-    message = MIMEMultipart()
-    message["From"] = sender_email
-    message["To"] = receiver_email
-    message["Cc"] = cc_email
-    message["Subject"] = subject
-
-    # 添加邮件正文
-    body = "请查收附件中的前两个月新客首单统计。"
-    message.attach(MIMEText(body, "plain"))
-    # 添加附件
-    with open(file_path, "rb") as attachment:
-        part = MIMEBase("application", "octet-stream")
-        part.set_payload(attachment.read())
-
-    encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f"attachment; filename= {file_path}")
-    message.attach(part)
-
-    # 发送邮件
-    with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
-        server.login(sender_email, password)
-        server.send_message(message, to_addrs=[receiver_email] + cc_email.split(","))
 
 
 def check_required_env_vars():
@@ -180,9 +140,13 @@ if __name__ == "__main__":
         )
         df_result["首单时间"] = df_result["首单时间"].dt.strftime("%Y年%m月%d日")
         excel_file = generate_excel(df_result)
-        send_email(
-            excel_file, sender_email, receiver_email, cc_email, password, subject
+
+        email_body = "请查收附件中的前两个月新客首单统计。"
+        email_sender = EmailSender(sender_email, password)
+        email_sender.send_email(
+            excel_file, receiver_email, cc_email, subject, email_body
         )
+
         # 删除文件
         os.remove(excel_file)
     except Exception as e:

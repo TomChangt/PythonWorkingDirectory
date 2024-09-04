@@ -1,16 +1,11 @@
 import pandas as pd
-import numpy as np
 import logging
 import os
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email.mime.text import MIMEText
-from email import encoders
 from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 from dotenv import load_dotenv
 from typing import List
+from EmailSender import EmailSender
 
 # 配置日志
 logging.basicConfig(
@@ -143,40 +138,6 @@ def format_data(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def send_email(
-    file_path: str,
-    sender_email: str,
-    receiver_email: str,
-    cc_email: str,
-    password: str,
-    subject: str,
-):
-    message = MIMEMultipart()
-    message["From"] = sender_email
-    message["To"] = receiver_email
-    message["Cc"] = cc_email
-    message["Subject"] = subject
-
-    body = "请查收附件中的订单报表。"
-    message.attach(MIMEText(body, "plain"))
-
-    with open(file_path, "rb") as attachment:
-        part = MIMEBase("application", "octet-stream")
-        part.set_payload(attachment.read())
-
-    encoders.encode_base64(part)
-    part.add_header(
-        "Content-Disposition", f"attachment; filename= {os.path.basename(file_path)}"
-    )
-    message.attach(part)
-
-    with smtplib.SMTP_SSL("smtp.exmail.qq.com", 465) as server:
-        server.login(sender_email, password)
-        server.send_message(message, to_addrs=[receiver_email] + cc_email.split(","))
-
-    logger.info("邮件发送成功")
-
-
 def main() -> None:
     kestrel_engine = create_db_engine("kestrel")
     bwcmall_engine = create_db_engine("bwcmall")
@@ -199,13 +160,16 @@ def main() -> None:
         file_name = "order_export.xlsx"
         df_formatted.to_excel(file_name, index=False)
 
-        send_email(
+        email_sender = EmailSender(
+            os.getenv("SENDER_EMAIL"), os.getenv("EMAIL_PASSWORD")
+        )
+        email_body = "请查收附件中的订单报表。"
+        email_sender.send_email(
             file_name,
-            os.getenv("SENDER_EMAIL"),
             os.getenv(f"{current_file_name}_RECEIVER_EMAIL"),
             os.getenv(f"{current_file_name}_CC_EMAIL"),
-            os.getenv("EMAIL_PASSWORD"),
             "订单报表",
+            email_body,
         )
         os.remove(file_name)
         logger.info(f"Excel文件 {file_name} 已删除")
