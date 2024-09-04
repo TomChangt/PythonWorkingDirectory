@@ -1,10 +1,16 @@
 import pandas as pd
-from sqlalchemy import create_engine
-from urllib.parse import quote_plus
 import numpy as np
 import logging
 import os
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
+from sqlalchemy import create_engine
+from urllib.parse import quote_plus
 from dotenv import load_dotenv
+from typing import List
 
 # 配置日志
 logging.basicConfig(
@@ -12,101 +18,87 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 获取文件名（不带扩展名）
+current_file_name = os.path.splitext(os.path.basename(__file__))[0].upper()
+
 # 加载环境变量
 load_dotenv()
 
-start_time = "2024-01-01"
-# URL 编码
-encoded_db_username = quote_plus(os.getenv("DB_USERNAME"))
-encoded_db_password = quote_plus(os.getenv("DB_PASSWORD"))
-# 创建数据库引擎
-kestrel_engine = create_engine(
-    f"mysql+mysqlconnector://{encoded_db_username}:{encoded_db_password}@{os.getenv('DB_HOSTNAME')}/kestrel"
-)
-bwcmall_engine = create_engine(
-    f"mysql+mysqlconnector://{encoded_db_username}:{encoded_db_password}@{os.getenv('DB_HOSTNAME')}/bwcmall"
-)
+
+def create_db_engine(db_name: str):
+    encoded_db_username = quote_plus(os.getenv("DB_USERNAME"))
+    encoded_db_password = quote_plus(os.getenv("DB_PASSWORD"))
+    return create_engine(
+        f"mysql+mysqlconnector://{encoded_db_username}:{encoded_db_password}@{os.getenv('DB_HOSTNAME')}/{db_name}"
+    )
 
 
-def fetch_order_data(order_ids):
+def fetch_data(engine, sql: str) -> pd.DataFrame:
+    return pd.read_sql(sql, engine)
+
+
+def fetch_order_data(order_ids: List[int], engine) -> pd.DataFrame:
     order_ids_str = ", ".join(map(str, order_ids))
-    ## 查询佰万仓订单
     order_sql = f"""
-    select id as order_id, p_order_id as bwc_order_id, receivable 
-    from bo_order 
-    where record_status = 1 
-    and p_order_id in ({order_ids_str})
+    SELECT id as order_id, p_order_id as bwc_order_id, receivable 
+    FROM bo_order 
+    WHERE record_status = 1 AND p_order_id IN ({order_ids_str})
     """
-    df_order = pd.read_sql(order_sql, bwcmall_engine)
-    o_ids_str = ", ".join(map(str, df_order["order_id"].tolist()))
+    df_order = fetch_data(engine, order_sql)
 
+    o_ids_str = ", ".join(map(str, df_order["order_id"].tolist()))
     order_after_sql = f"""
-    select order_id, sum(ifNull(amount, 0)) as sales_after_amount 
-    from bo_order_after_sale 
-    where record_status = 1
-    and order_id in ({o_ids_str})
-    and after_sale_status = 8
+    SELECT order_id, SUM(IFNULL(amount, 0)) as sales_after_amount 
+    FROM bo_order_after_sale 
+    WHERE record_status = 1 AND order_id IN ({o_ids_str}) AND after_sale_status = 8
     GROUP BY order_id
     """
-    df_order_after = pd.read_sql(order_after_sql, bwcmall_engine)
-    rs = pd.merge(df_order, df_order_after, on="order_id", how="left")
-    rs.fillna(0, inplace=True)
+    df_order_after = fetch_data(engine, order_after_sql)
+
+    rs = pd.merge(df_order, df_order_after, on="order_id", how="left").fillna(0)
     rs["order_amount"] = rs["receivable"] - rs["sales_after_amount"]
-    rs.drop(columns=["receivable", "sales_after_amount"], inplace=True)
-    return rs
+    return rs.drop(columns=["receivable", "sales_after_amount"])
 
 
-def fetch_purchase_data(order_ids):
+def fetch_purchase_data(order_ids: List[int], engine) -> pd.DataFrame:
     order_ids_str = ", ".join(map(str, order_ids))
-
     purchase_sql = f"""
-    select p.id as purchase_id, p.payable as purchase_amount, r.order_id 
-    from bo_purchase p 
-    left join bo_order_purchase_rela r on p.id = r.purchase_id
-    where p.record_status = 1 
-    and r.record_status = 1 
-    and p.purchase_status != 2
-    and r.order_id in ({order_ids_str})       
+    SELECT p.id as purchase_id, p.payable as purchase_amount, r.order_id 
+    FROM bo_purchase p 
+    LEFT JOIN bo_order_purchase_rela r ON p.id = r.purchase_id
+    WHERE p.record_status = 1 AND r.record_status = 1 AND p.purchase_status != 2 AND r.order_id IN ({order_ids_str})       
     """
-    df_purchase = pd.read_sql(purchase_sql, bwcmall_engine)
+    df_purchase = fetch_data(engine, purchase_sql)
+
     purchase_ids_str = ", ".join(map(str, df_purchase["purchase_id"].tolist()))
-
     purchase_after_sql = f"""
-    select purchase_id, SUM(IFNULL(amount, 0)) as purchase_after_amount 
-    from bo_purchase_after_sale 
-    where record_status = 1 
-    and purchase_id in ({purchase_ids_str})  
-    group by purchase_id 
+    SELECT purchase_id, SUM(IFNULL(amount, 0)) as purchase_after_amount 
+    FROM bo_purchase_after_sale 
+    WHERE record_status = 1 AND purchase_id IN ({purchase_ids_str})  
+    GROUP BY purchase_id 
     """
-    df_purchase_after = pd.read_sql(purchase_after_sql, bwcmall_engine)
-    rs = pd.merge(df_purchase, df_purchase_after, on="purchase_id", how="left")
-    rs.fillna(0, inplace=True)
+    df_purchase_after = fetch_data(engine, purchase_after_sql)
+
+    rs = pd.merge(df_purchase, df_purchase_after, on="purchase_id", how="left").fillna(
+        0
+    )
     rs["cost"] = rs["purchase_amount"] - rs["purchase_after_amount"]
-    rs.drop(columns=["purchase_amount", "purchase_after_amount"], inplace=True)
-    return rs
+    return rs.drop(columns=["purchase_amount", "purchase_after_amount"])
 
 
-try:
-    query_order = f"""
-    select terminal_name, create_time, sn, bwc_order_id, order_status 
-    from ko_order 
-    where record_status = 1 
-    and bwc_order_id is not null
-    and order_status != 2 
-    and create_time >= '{start_time}'
-    ORDER BY create_time desc 
-    """
-    df_kestrel_order = pd.read_sql(query_order, kestrel_engine)
-    logger.info(f"销售数据查询完成，查询到 {len(df_kestrel_order)} 条记录")
+def process_data(df_kestrel_order: pd.DataFrame, bwcmall_engine) -> pd.DataFrame:
     p_order_ids = df_kestrel_order["bwc_order_id"].tolist()
-    batch_size = 1000  # 每批次的大小，可以根据需要调整
+    batch_size = 1000
     df_calculate_data = pd.DataFrame()
 
     for i in range(0, len(p_order_ids), batch_size):
         batch_order_ids = p_order_ids[i : i + batch_size]
         logger.info(f"查询第 {i // batch_size + 1} 批次的数据")
-        df_order_batch = fetch_order_data(batch_order_ids)
-        df_purchase_batch = fetch_purchase_data(df_order_batch["order_id"].tolist())
+        df_order_batch = fetch_order_data(batch_order_ids, bwcmall_engine)
+        df_purchase_batch = fetch_purchase_data(
+            df_order_batch["order_id"].tolist(), bwcmall_engine
+        )
+
         df_purchase_summary = (
             df_purchase_batch.groupby("order_id").agg({"cost": "sum"}).reset_index()
         )
@@ -121,12 +113,13 @@ try:
         df_result["profit"] = df_result["order_amount"] - df_result["cost"]
         df_calculate_data = pd.concat([df_calculate_data, df_result], ignore_index=True)
 
-    df_calculate_data = pd.merge(
+    return pd.merge(
         df_kestrel_order, df_calculate_data, on="bwc_order_id", how="left"
-    )
-    df_calculate_data.fillna(0, inplace=True)
+    ).fillna(0)
 
-    df_calculate_data.rename(
+
+def format_data(df: pd.DataFrame) -> pd.DataFrame:
+    df.rename(
         columns={
             "sn": "订单号",
             "terminal_name": "用户名称",
@@ -137,34 +130,92 @@ try:
         },
         inplace=True,
     )
+    df["下单时间"] = df["下单时间"].dt.strftime("%Y年%m月%d日")
+    status_map = {
+        0: "待确认",
+        1: "待发货",
+        2: "已取消",
+        3: "已发货",
+        4: "已完成",
+        5: "已完成",
+    }
+    df["订单状态"] = df["订单状态"].map(status_map).fillna("待确认")
+    return df
 
-    df_calculate_data["下单时间"] = df_calculate_data["下单时间"].dt.strftime(
-        "%Y年%m月%d日"
+
+def send_email(
+    file_path: str,
+    sender_email: str,
+    receiver_email: str,
+    cc_email: str,
+    password: str,
+    subject: str,
+):
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = receiver_email
+    message["Cc"] = cc_email
+    message["Subject"] = subject
+
+    body = "请查收附件中的订单报表。"
+    message.attach(MIMEText(body, "plain"))
+
+    with open(file_path, "rb") as attachment:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(attachment.read())
+
+    encoders.encode_base64(part)
+    part.add_header(
+        "Content-Disposition", f"attachment; filename= {os.path.basename(file_path)}"
     )
+    message.attach(part)
 
-    conditions = [
-        (df_calculate_data["订单状态"] == 0),
-        (df_calculate_data["订单状态"] == 1),
-        (df_calculate_data["订单状态"] == 2),
-        (df_calculate_data["订单状态"] == 3),
-        (df_calculate_data["订单状态"] == 4),
-        (df_calculate_data["订单状态"] == 5),
-    ]
-    choices = ["待确认", "待发货", "已取消", "已发货", "已完成", "已完成"]
-    df_calculate_data["订单状态"] = np.select(conditions, choices, default="待确认")
+    with smtplib.SMTP_SSL("smtp.exmail.qq.com", 465) as server:
+        server.login(sender_email, password)
+        server.send_message(message, to_addrs=[receiver_email] + cc_email.split(","))
 
-    columns_to_export = ["订单号", "用户名称", "下单时间", "订单状态", "总金额", "毛利"]
+    logger.info("邮件发送成功")
 
-    # 将数据框写入 Excel 文件
-    with pd.ExcelWriter("./data/order_export.xlsx") as writer:
-        df_calculate_data.to_excel(
-            writer, columns=columns_to_export, sheet_name="Orders", index=False
+
+def main() -> None:
+    kestrel_engine = create_db_engine("kestrel")
+    bwcmall_engine = create_db_engine("bwcmall")
+    try:
+        query_order = """
+        SELECT terminal_name, create_time, sn, bwc_order_id, order_status 
+        FROM ko_order 
+        WHERE record_status = 1 AND bwc_order_id IS NOT NULL AND order_status != 2 AND create_time >= '2024-01-01'
+        ORDER BY create_time DESC 
+        """
+        df_kestrel_order = fetch_data(kestrel_engine, query_order)
+        logger.info(f"销售数据查询完成，查询到 {len(df_kestrel_order)} 条记录")
+
+        df_calculate_data = process_data(df_kestrel_order, bwcmall_engine)
+        df_formatted = format_data(df_calculate_data)
+
+        # 在导出之前将 bwc_order_id 转换为字符串类型
+        df_formatted["bwc_order_id"] = df_formatted["bwc_order_id"].astype(str)
+
+        file_name = "order_export.xlsx"
+        df_formatted.to_excel(file_name, index=False)
+
+        send_email(
+            file_name,
+            os.getenv("SENDER_EMAIL"),
+            os.getenv(f"{current_file_name}_RECEIVER_EMAIL"),
+            os.getenv(f"{current_file_name}_CC_EMAIL"),
+            os.getenv("EMAIL_PASSWORD"),
+            "订单报表",
         )
+        os.remove(file_name)
+        logger.info(f"Excel文件 {file_name} 已删除")
 
-    print("数据已成功导出到 order_export.xlsx")
+    except Exception as e:
+        logger.error(f"发生错误: {e}")
+    finally:
+        kestrel_engine.dispose()
+        bwcmall_engine.dispose()
 
-except Exception as e:
-    logger.error(f"发生错误: {e}")
-finally:
-    kestrel_engine.dispose()
-    bwcmall_engine.dispose()
+
+if __name__ == "__main__":
+    main()

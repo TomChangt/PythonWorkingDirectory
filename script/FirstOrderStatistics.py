@@ -18,6 +18,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# 获取文件名（不带扩展名）
+current_file_name = os.path.splitext(os.path.basename(__file__))[0].upper()
+
+
 # 加载环境变量
 load_dotenv()
 
@@ -90,8 +95,9 @@ def check_required_env_vars():
         "DB_PASSWORD",
         "DB_HOSTNAME",
         "SENDER_EMAIL",
-        "RECEIVER_EMAIL",
         "EMAIL_PASSWORD",
+        f"{current_file_name}_RECEIVER_EMAIL",
+        f"{current_file_name}_CC_EMAIL",
     ]
     for var in required_vars:
         if not os.getenv(var):
@@ -108,8 +114,8 @@ if __name__ == "__main__":
     encoded_db_password = os.getenv("DB_PASSWORD")
     db_hostname = os.getenv("DB_HOSTNAME")
     sender_email = os.getenv("SENDER_EMAIL")
-    receiver_email = os.getenv("RECEIVER_EMAIL")
-    cc_email = os.getenv("CC_EMAIL", "")  # 提供默认值
+    receiver_email = os.getenv(f"{current_file_name}_RECEIVER_EMAIL")
+    cc_email = os.getenv(f"{current_file_name}_CC_EMAIL")
     password = os.getenv("EMAIL_PASSWORD")
 
     # 创建数据库引擎
