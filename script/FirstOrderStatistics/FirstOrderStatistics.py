@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 import logging
 from datetime import datetime, timedelta
+from email.mime.text import MIMEText
 
 # 配置日志
 logging.basicConfig(
@@ -27,7 +28,7 @@ def search_db(db_engine: create_engine, query: str) -> pd.DataFrame:
 
 def generate_excel(df: pd.DataFrame) -> str:
     # 生成Excel文件
-    excel_file = "report.xlsx"
+    excel_file = "result.xlsx"
     df.to_excel(excel_file, index=False)
     return excel_file
 
@@ -54,6 +55,8 @@ def send_email(
     cc_email: str,
     password: str,
     subject: str,
+    smtp_server: str = "smtp.exmail.qq.com",
+    smtp_port: int = 465,
 ) -> None:
 
     # 创建邮件
@@ -63,6 +66,9 @@ def send_email(
     message["Cc"] = cc_email
     message["Subject"] = subject
 
+    # 添加邮件正文
+    body = "请查收附件中的前两个月新客首单统计。"
+    message.attach(MIMEText(body, "plain"))
     # 添加附件
     with open(file_path, "rb") as attachment:
         part = MIMEBase("application", "octet-stream")
@@ -73,25 +79,12 @@ def send_email(
     message.attach(part)
 
     # 发送邮件
-    with smtplib.SMTP_SSL("smtp.exmail.qq.com", 465) as server:
+    with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
         server.login(sender_email, password)
         server.send_message(message, to_addrs=[receiver_email] + cc_email.split(","))
 
-    # 删除文件
-    os.remove(file_path)
 
-
-if __name__ == "__main__":
-    # 从环境变量获取配置
-    encoded_db_username = os.getenv("DB_USERNAME")
-    encoded_db_password = os.getenv("DB_PASSWORD")
-    db_hostname = os.getenv("DB_HOSTNAME")
-    sender_email = os.getenv("SENDER_EMAIL")
-    receiver_email = os.getenv("RECEIVER_EMAIL")
-    cc_email = os.getenv("CC_EMAIL", "")  # 提供默认值
-    password = os.getenv("EMAIL_PASSWORD")
-
-    # 检查必要的环境变量
+def check_required_env_vars():
     required_vars = [
         "DB_USERNAME",
         "DB_PASSWORD",
@@ -104,6 +97,20 @@ if __name__ == "__main__":
         if not os.getenv(var):
             logger.error(f"缺少必要的环境变量: {var}")
             sys.exit(1)
+
+
+if __name__ == "__main__":
+
+    check_required_env_vars()
+
+    # 从环境变量获取配置
+    encoded_db_username = os.getenv("DB_USERNAME")
+    encoded_db_password = os.getenv("DB_PASSWORD")
+    db_hostname = os.getenv("DB_HOSTNAME")
+    sender_email = os.getenv("SENDER_EMAIL")
+    receiver_email = os.getenv("RECEIVER_EMAIL")
+    cc_email = os.getenv("CC_EMAIL", "")  # 提供默认值
+    password = os.getenv("EMAIL_PASSWORD")
 
     # 创建数据库引擎
     kestrel_engine = create_engine(
@@ -152,7 +159,6 @@ if __name__ == "__main__":
         df_result = pd.merge(
             order_data_df, advisor_data_df, on="bwc_order_id", how="left"
         )
-
         # 移除某一列
         df_result.drop(columns=["bwc_order_id"], inplace=True)
         df_result.rename(
@@ -171,6 +177,8 @@ if __name__ == "__main__":
         send_email(
             excel_file, sender_email, receiver_email, cc_email, password, subject
         )
+        # 删除文件
+        os.remove(excel_file)
     except Exception as e:
         logger.error(f"发生错误: {str(e)}")
     finally:
