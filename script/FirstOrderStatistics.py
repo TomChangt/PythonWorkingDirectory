@@ -49,7 +49,7 @@ def get_previous_two_months(date: datetime = None):
     )
 
 
-def check_required_env_vars():
+def check_required_env_vars() -> bool:
     required_vars = [
         "DB_USERNAME",
         "DB_PASSWORD",
@@ -62,12 +62,13 @@ def check_required_env_vars():
     for var in required_vars:
         if not os.getenv(var):
             logger.error(f"缺少必要的环境变量: {var}")
-            sys.exit(1)
+            return False
+    return True
 
 
 if __name__ == "__main__":
-
-    check_required_env_vars()
+    if not check_required_env_vars():
+        sys.exit(1)
 
     # 从环境变量获取配置
     encoded_db_username = os.getenv("DB_USERNAME")

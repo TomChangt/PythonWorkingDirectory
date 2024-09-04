@@ -1,6 +1,7 @@
 import pandas as pd
 import logging
 import os
+import sys
 from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 from dotenv import load_dotenv
@@ -18,14 +19,6 @@ current_file_name = os.path.splitext(os.path.basename(__file__))[0].upper()
 
 # 加载环境变量
 load_dotenv()
-
-
-def create_db_engine(db_name: str):
-    encoded_db_username = quote_plus(os.getenv("DB_USERNAME"))
-    encoded_db_password = quote_plus(os.getenv("DB_PASSWORD"))
-    return create_engine(
-        f"mysql+mysqlconnector://{encoded_db_username}:{encoded_db_password}@{os.getenv('DB_HOSTNAME')}/{db_name}"
-    )
 
 
 def fetch_data(engine, sql: str) -> pd.DataFrame:
@@ -138,9 +131,44 @@ def format_data(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def main() -> None:
-    kestrel_engine = create_db_engine("kestrel")
-    bwcmall_engine = create_db_engine("bwcmall")
+def check_required_env_vars() -> bool:
+    required_vars = [
+        "DB_USERNAME",
+        "DB_PASSWORD",
+        "DB_HOSTNAME",
+        "SENDER_EMAIL",
+        "EMAIL_PASSWORD",
+        f"{current_file_name}_RECEIVER_EMAIL",
+        f"{current_file_name}_CC_EMAIL",
+    ]
+    for var in required_vars:
+        if not os.getenv(var):
+            logger.error(f"缺少必要的环境变量: {var}")
+            return False
+    return True
+
+
+if __name__ == "__main__":
+
+    if not check_required_env_vars():
+        sys.exit(1)
+
+    # 从环境变量获取配置
+    encoded_db_username = os.getenv("DB_USERNAME")
+    encoded_db_password = os.getenv("DB_PASSWORD")
+    db_hostname = os.getenv("DB_HOSTNAME")
+    sender_email = os.getenv("SENDER_EMAIL")
+    receiver_email = os.getenv(f"{current_file_name}_RECEIVER_EMAIL")
+    cc_email = os.getenv(f"{current_file_name}_CC_EMAIL")
+    password = os.getenv("EMAIL_PASSWORD")
+
+    # 创建数据库引擎
+    kestrel_engine = create_engine(
+        f"mysql+mysqlconnector://{quote_plus(encoded_db_username)}:{quote_plus(encoded_db_password)}@{db_hostname}/kestrel"
+    )
+    bwcmall_engine = create_engine(
+        f"mysql+mysqlconnector://{quote_plus(encoded_db_username)}:{quote_plus(encoded_db_password)}@{db_hostname}/bwcmall"
+    )
     try:
         query_order = """
         SELECT terminal_name, create_time, sn, bwc_order_id, order_status 
@@ -160,16 +188,10 @@ def main() -> None:
         file_name = "order_export.xlsx"
         df_formatted.to_excel(file_name, index=False)
 
-        email_sender = EmailSender(
-            os.getenv("SENDER_EMAIL"), os.getenv("EMAIL_PASSWORD")
-        )
         email_body = "请查收附件中的订单报表。"
+        email_sender = EmailSender(sender_email, password)
         email_sender.send_email(
-            file_name,
-            os.getenv(f"{current_file_name}_RECEIVER_EMAIL"),
-            os.getenv(f"{current_file_name}_CC_EMAIL"),
-            "订单报表",
-            email_body,
+            file_name, receiver_email, cc_email, "订单报表", email_body
         )
         os.remove(file_name)
         logger.info(f"Excel文件 {file_name} 已删除")
@@ -179,7 +201,3 @@ def main() -> None:
     finally:
         kestrel_engine.dispose()
         bwcmall_engine.dispose()
-
-
-if __name__ == "__main__":
-    main()
