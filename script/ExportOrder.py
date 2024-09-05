@@ -21,11 +21,11 @@ current_file_name = os.path.splitext(os.path.basename(__file__))[0].upper()
 load_dotenv()
 
 
-def fetch_data(engine, sql: str) -> pd.DataFrame:
+def fetch_data(engine: create_engine, sql: str) -> pd.DataFrame:
     return pd.read_sql(sql, engine)
 
 
-def fetch_order_data(order_ids: List[int], engine) -> pd.DataFrame:
+def fetch_order_data(order_ids: List[int], engine: create_engine) -> pd.DataFrame:
     order_ids_str = ", ".join(map(str, order_ids))
     order_sql = f"""
     SELECT id as order_id, p_order_id as bwc_order_id, receivable 
@@ -74,7 +74,9 @@ def fetch_purchase_data(order_ids: List[int], engine) -> pd.DataFrame:
     return rs.drop(columns=["purchase_amount", "purchase_after_amount"])
 
 
-def process_data(df_kestrel_order: pd.DataFrame, bwcmall_engine) -> pd.DataFrame:
+def process_data(
+    df_kestrel_order: pd.DataFrame, bwcmall_engine: create_engine
+) -> pd.DataFrame:
     p_order_ids = df_kestrel_order["bwc_order_id"].tolist()
     batch_size = 1000
     df_calculate_data = pd.DataFrame()
