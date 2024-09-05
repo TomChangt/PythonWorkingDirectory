@@ -229,14 +229,6 @@ def process_query_results(df_list: List[pd.DataFrame]) -> pd.DataFrame:
         - grouped_df["销售售后"]
         - (grouped_df["采购成本"] - grouped_df["采购售后"])
     )
-    grouped_df["毛利率"] = grouped_df["毛利"] / (
-        grouped_df["销售收入"] - grouped_df["销售售后"]
-    )
-
-    # 计算占比
-    total_sales = grouped_df["销售收入"].sum()
-    grouped_df["占比"] = grouped_df["销售收入"] / total_sales
-
     # 重新排序列
     grouped_df = grouped_df[
         [
@@ -246,24 +238,14 @@ def process_query_results(df_list: List[pd.DataFrame]) -> pd.DataFrame:
             "采购成本",
             "采购售后",
             "毛利",
-            "毛利率",
-            "占比",
         ]
     ]
 
     # 添加合计行
     total_row = grouped_df.sum(numeric_only=True).to_frame().T
     total_row["分类"] = "合计"
-    total_row["毛利率"] = total_row["毛利"] / (
-        total_row["销售收入"] - total_row["销售售后"]
-    )
-    total_row["占比"] = 1  # 合计行的占比应该是100%
 
     final_df = pd.concat([grouped_df, total_row], ignore_index=True)
-
-    # 格式化百分比列
-    final_df["毛利率"] = final_df["毛利率"].apply(lambda x: f"{x:.2%}")
-    final_df["占比"] = final_df["占比"].apply(lambda x: f"{x:.2%}")
 
     return final_df
 
