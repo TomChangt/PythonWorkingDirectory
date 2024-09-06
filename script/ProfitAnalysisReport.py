@@ -296,8 +296,8 @@ if __name__ == "__main__":
 
         # 发送邮件
         email_sender = EmailSender(sender_email, password)
-        subject = "上月毛利分析报告"
-        body = "请查看附件中的上月毛利分析报告。"
+        subject = "月度业务品类拆分"
+        body = "请查看附件中的月度业务品类拆分。"
         email_sender.send_email(excel_file, receiver_email, cc_email, subject, body)
         # 删除文件
         os.remove(excel_file)
