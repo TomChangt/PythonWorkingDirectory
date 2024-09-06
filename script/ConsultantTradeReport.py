@@ -102,7 +102,7 @@ if __name__ == "__main__":
                 select owner, sum(amount) as 'a_amount' from
                 (
                     select crm_customer.owner, crm_customer.id, crm_customer.platform_account, crm_customer.name, sum(o.amount) as amount, count(*) as count from crm_customer
-                    left join bwcmall.bo_order_after_sale o on o.record_status=1 and o.order_sn LIKE'%G%' and o.after_sale_status=8 and o.customer_id=crm_customer.platform_account
+                    left join bwcmall.bo_order_after_sale o on o.record_status=1 and o.after_sale_status=8 and o.customer_id=crm_customer.platform_account
                     where crm_customer.record_status and crm_customer.owner is not null
                         and crm_customer.platform_account is not null
                         and o.id is not null and left(o.modify_time,7)='{last_month}'
